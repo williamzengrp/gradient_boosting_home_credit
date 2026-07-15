@@ -1,13 +1,3 @@
-"""
-Gradient Boosting — Home Credit Default Risk
-=============================================
-Supervised ML pipeline to predict loan default (binary classification).
-Main metric: ROC-AUC.
-
-Data: Kaggle "Home Credit Default Risk" — place application_train.csv
-      (and optionally the supplementary CSVs) in a data/ subfolder.
-"""
-
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -51,17 +41,16 @@ try:
 except ImportError:
     SHAP_AVAILABLE = False
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+
 DATA_DIR   = "data"
 OUTPUT_DIR = "outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 N_FOLDS       = 5
 RANDOM_STATE  = 42
-OPTUNA_TRIALS = 50      # reduce for speed
+OPTUNA_TRIALS = 50
 TARGET        = "TARGET"
 
-# ── 1. Load Data ──────────────────────────────────────────────────────────────
 
 def load_main_table() -> pd.DataFrame:
     path = os.path.join(DATA_DIR, "application_train.csv")
@@ -78,7 +67,6 @@ def load_main_table() -> pd.DataFrame:
 
 
 def load_supplementary_tables() -> dict[str, pd.DataFrame]:
-    """Optionally load bureau, previous_application, etc. for feature engineering."""
     tables = {}
     names = ["bureau", "bureau_balance", "previous_application",
              "installments_payments", "credit_card_balance", "POS_CASH_balance"]
@@ -89,12 +77,11 @@ def load_supplementary_tables() -> dict[str, pd.DataFrame]:
             print(f"    Loaded {name}.csv: {tables[name].shape}")
     return tables
 
-# ── 2. EDA ────────────────────────────────────────────────────────────────────
 
 def run_eda(df: pd.DataFrame) -> None:
     print("\n[2] EDA")
 
-    # Target distribution
+
     target_counts = df[TARGET].value_counts()
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
     target_counts.plot.bar(ax=axes[0], color=["steelblue","tomato"], edgecolor="k")
@@ -106,7 +93,7 @@ def run_eda(df: pd.DataFrame) -> None:
     imbalance_pct = target_counts[1] / len(df) * 100
     print(f"    Default rate: {imbalance_pct:.2f}%  ({target_counts[1]:,} / {len(df):,})")
 
-    # Missing values (top 20)
+
     missing = df.isnull().mean().sort_values(ascending=False).head(30)
     missing[missing > 0].plot.barh(ax=axes[1], color="salmon")
     axes[1].set_title("Top Features by Missing Rate")
@@ -117,7 +104,7 @@ def run_eda(df: pd.DataFrame) -> None:
     print(f"    Features with > 50% missing: "
           f"{(df.isnull().mean() > 0.5).sum()}")
 
-    # Correlation heatmap for numeric features (top 20 by variance)
+
     num_cols = df.select_dtypes(include=np.number).drop(columns=[TARGET, "SK_ID_CURR"],
                                                          errors="ignore")
     top20 = num_cols.var().nlargest(20).index
@@ -132,7 +119,6 @@ def run_eda(df: pd.DataFrame) -> None:
     plt.close()
     print("    EDA plots saved.")
 
-# ── 3. Feature Engineering from Secondary Tables ──────────────────────────────
 
 def engineer_bureau_features(bureau: pd.DataFrame) -> pd.DataFrame:
     agg = bureau.groupby("SK_ID_CURR").agg(
@@ -161,20 +147,13 @@ def engineer_prev_app_features(prev: pd.DataFrame) -> pd.DataFrame:
                                  agg["prev_app_count"].clip(lower=1))
     return agg
 
-# ── 4. Preprocessing ──────────────────────────────────────────────────────────
 
-KNOWN_LEAKAGE_COLS = []   # add any leak columns here
+KNOWN_LEAKAGE_COLS = []
 
 def preprocess(df: pd.DataFrame, tables: dict = None) -> tuple[pd.DataFrame, pd.Series]:
-    """
-    - Drop leakage columns
-    - Merge secondary table features
-    - Encode categoricals
-    - Return X (features) and y (target)
-    """
     df = df.copy()
 
-    # Merge secondary features
+
     if tables:
         if "bureau" in tables:
             bureau_feats = engineer_bureau_features(tables["bureau"])
@@ -185,12 +164,12 @@ def preprocess(df: pd.DataFrame, tables: dict = None) -> tuple[pd.DataFrame, pd.
             df = df.merge(prev_feats, on="SK_ID_CURR", how="left")
             print(f"    Merged prev_app features. Shape: {df.shape}")
 
-    # Drop ID and target
+
     drop_cols = ["SK_ID_CURR", TARGET] + KNOWN_LEAKAGE_COLS
     y = df[TARGET]
     X = df.drop(columns=[c for c in drop_cols if c in df.columns])
 
-    # Encode categoricals (label encode binary; one-hot encode multi-class)
+
     cat_cols = X.select_dtypes(include="object").columns.tolist()
     for col in cat_cols:
         n_unique = X[col].nunique()
@@ -205,7 +184,6 @@ def preprocess(df: pd.DataFrame, tables: dict = None) -> tuple[pd.DataFrame, pd.
           f"{y.value_counts().to_dict()}")
     return X, y
 
-# ── 5. Baseline Models ────────────────────────────────────────────────────────
 
 def build_logreg_pipeline() -> Pipeline:
     return Pipeline([
@@ -222,7 +200,6 @@ def cv_auc(model, X: pd.DataFrame, y: pd.Series,
     scores = cross_val_score(model, X, y, cv=skf, scoring="roc_auc", n_jobs=-1)
     return scores.mean(), scores.std()
 
-# ── 6. LightGBM with Cross-Validation ────────────────────────────────────────
 
 def train_lgbm_cv(X: pd.DataFrame, y: pd.Series,
                   params: dict = None) -> tuple[lgb.Booster, list[float]]:
@@ -275,7 +252,6 @@ def train_lgbm_cv(X: pd.DataFrame, y: pd.Series,
     print(f"  OOF AUC: {oof_auc:.4f}  (mean folds: {np.mean(fold_aucs):.4f} ± {np.std(fold_aucs):.4f})")
     return final_model, fold_aucs, oof_preds
 
-# ── 7. Hyperparameter Tuning (Optuna) ─────────────────────────────────────────
 
 def tune_lgbm(X: pd.DataFrame, y: pd.Series) -> dict:
     if not OPTUNA_AVAILABLE:
@@ -317,19 +293,18 @@ def tune_lgbm(X: pd.DataFrame, y: pd.Series) -> dict:
     print(f"  Best params: {study.best_params}")
     return study.best_params
 
-# ── 8. Model Comparison ───────────────────────────────────────────────────────
 
 def compare_models(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
     print("\n[Model Comparison] 5-fold CV AUC …")
     rows = []
 
-    # Logistic Regression
+
     lr = build_logreg_pipeline()
     mu, sd = cv_auc(lr, X, y)
     print(f"  Logistic Regression:  {mu:.4f} ± {sd:.4f}")
     rows.append({"model": "Logistic Regression", "cv_auc_mean": mu, "cv_auc_std": sd})
 
-    # Random Forest (small for speed)
+
     rf = Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
         ("model",   RandomForestClassifier(n_estimators=100, max_depth=8,
@@ -340,7 +315,7 @@ def compare_models(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
     print(f"  Random Forest:        {mu:.4f} ± {sd:.4f}")
     rows.append({"model": "Random Forest", "cv_auc_mean": mu, "cv_auc_std": sd})
 
-    # LightGBM (quick cross_val_score)
+
     lgbm_clf = lgb.LGBMClassifier(n_estimators=300, learning_rate=0.05,
                                    class_weight="balanced",
                                    verbosity=-1, random_state=RANDOM_STATE)
@@ -350,7 +325,7 @@ def compare_models(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
     print(f"  LightGBM:             {mu:.4f} ± {sd:.4f}")
     rows.append({"model": "LightGBM", "cv_auc_mean": mu, "cv_auc_std": sd})
 
-    # XGBoost
+
     xgb_clf = xgb.XGBClassifier(n_estimators=300, learning_rate=0.05,
                                   max_depth=6, use_label_encoder=False,
                                   eval_metric="auc", verbosity=0,
@@ -374,7 +349,6 @@ def compare_models(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
 
     return pd.DataFrame(rows).sort_values("cv_auc_mean", ascending=False)
 
-# ── 9. Evaluation Plots ───────────────────────────────────────────────────────
 
 def plot_roc_pr(y_true: np.ndarray, y_prob: np.ndarray, label: str, fname: str):
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
@@ -455,7 +429,6 @@ def plot_model_comparison(comp_df: pd.DataFrame, fname: str):
     plt.savefig(fname, dpi=150)
     plt.close()
 
-# ── 10. Kaggle Submission ─────────────────────────────────────────────────────
 
 def make_submission(model: lgb.Booster, fname: str = "submission.csv"):
     test_path = os.path.join(DATA_DIR, "application_test.csv")
@@ -465,7 +438,7 @@ def make_submission(model: lgb.Booster, fname: str = "submission.csv"):
     test_df   = pd.read_csv(test_path)
     sk_ids    = test_df["SK_ID_CURR"]
     test_X, _ = preprocess(test_df.assign(**{TARGET: 0}))
-    # Align columns
+
     train_cols = model.feature_name()
     test_X = test_X.reindex(columns=train_cols, fill_value=0)
     preds = model.predict(test_X)
@@ -474,49 +447,48 @@ def make_submission(model: lgb.Booster, fname: str = "submission.csv"):
     submission.to_csv(out_path, index=False)
     print(f"  Kaggle submission saved: {out_path}")
 
-# ── 11. Main ──────────────────────────────────────────────────────────────────
 
 def main():
     print("=" * 60)
     print("  HOME CREDIT DEFAULT RISK — GRADIENT BOOSTING PIPELINE")
     print("=" * 60)
 
-    # --- Load ---
+
     df = load_main_table()
     tables = load_supplementary_tables()
 
-    # --- EDA ---
+
     run_eda(df)
 
-    # --- Preprocess ---
+
     print("\n[3] Preprocessing …")
     X, y = preprocess(df, tables=tables if tables else None)
 
-    # Impute for sklearn models
+
     X_imp = pd.DataFrame(
         SimpleImputer(strategy="median").fit_transform(X),
         columns=X.columns
     )
 
-    # --- Model Comparison ---
+
     comp_df = compare_models(X_imp, y)
     print("\n  Model Comparison Table:")
     print(comp_df.to_string(index=False))
     comp_df.to_csv(os.path.join(OUTPUT_DIR, "model_comparison.csv"), index=False)
     plot_model_comparison(comp_df, os.path.join(OUTPUT_DIR, "model_comparison.png"))
 
-    # --- Optuna Tuning ---
+
     best_params = tune_lgbm(X_imp, y) if OPTUNA_AVAILABLE else {}
 
-    # --- Full LightGBM CV (with best params) ---
+
     print("\n[LightGBM] Full cross-validation with best params …")
     lgbm_model, fold_aucs, oof_preds = train_lgbm_cv(X_imp, y, params=best_params)
 
-    # Threshold at 0.5
+
     threshold = 0.5
     y_pred    = (oof_preds >= threshold).astype(int)
 
-    # --- Evaluation Plots ---
+
     plot_roc_pr(y.values, oof_preds, "LightGBM OOF",
                 os.path.join(OUTPUT_DIR, "roc_pr_lgbm.png"))
     plot_confusion_matrix(y.values, y_pred, "LightGBM OOF",
@@ -524,19 +496,19 @@ def main():
     plot_feature_importance(lgbm_model, X_imp.columns.tolist(),
                             os.path.join(OUTPUT_DIR, "feature_importance.png"))
 
-    # Classification report
+
     print("\n  Classification Report (OOF, threshold=0.5):")
     print(classification_report(y, y_pred, target_names=["No Default", "Default"]))
 
-    # --- SHAP ---
+
     sample_size = min(2000, len(X_imp))
     X_sample    = X_imp.sample(sample_size, random_state=RANDOM_STATE)
     plot_shap(lgbm_model, X_sample, os.path.join(OUTPUT_DIR, "shap_summary.png"))
 
-    # --- Kaggle Submission ---
+
     make_submission(lgbm_model)
 
-    # --- Final Summary ---
+
     oof_auc = roc_auc_score(y, oof_preds)
     print(f"\n{'='*60}")
     print(f"  Final LightGBM OOF AUC : {oof_auc:.4f}")
